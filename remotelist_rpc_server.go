@@ -11,8 +11,9 @@ import (
 func main() {
 	logFile := "operations.log"
 	snapFile := "snapshot.json"
+	historyMaxLines := 20
 
-	list, err := remotelist.NewRemoteList(logFile, snapFile, 5*time.Second)
+	list, err := remotelist.NewRemoteList(logFile, snapFile, 5*time.Second, historyMaxLines)
 	if err != nil {
 		fmt.Println("failed to init remote list:", err)
 		return

@@ -29,20 +29,24 @@ type BoolReply struct {
 }
 
 type logEntry struct {
-	Op    string `json:"op"`
+	Op     string `json:"op"`
 	ListID int    `json:"list_id"`
-	Value int    `json:"value,omitempty"`
-	Time int64  `json:"time"`
+	Value  int    `json:"value,omitempty"`
+	Time   int64  `json:"time"`
 }
 
 type RemoteList struct {
-	mu   sync.Mutex
-	lists map[int][]int
-	logFile string
-	snapFile string
+	mu               sync.Mutex
+	lists            map[int][]int
+	logFile          string
+	snapFile         string
+	historyFile      string
 	snapshotInterval time.Duration
-	stopSnapshot chan struct{}
+	stopSnapshot     chan struct{}
+	historyMaxLines  int
 }
+
+const defaultHistoryMaxLines = 20
 
 func (l *RemoteList) Append(args ArgsAppend, reply *BoolReply) error {
 	l.mu.Lock()
@@ -76,13 +80,18 @@ func (l *RemoteList) Remove(args ArgsListID, reply *int) error {
 	return nil
 }
 
-func NewRemoteList(logFile, snapFile string, snapshotInterval time.Duration) (*RemoteList, error) {
+func NewRemoteList(logFile, snapFile string, snapshotInterval time.Duration, historyMaxLines int) (*RemoteList, error) {
+	if historyMaxLines <= 0 {
+		historyMaxLines = defaultHistoryMaxLines
+	}
 	rl := &RemoteList{
 		lists:            make(map[int][]int),
 		logFile:          logFile,
 		snapFile:         snapFile,
+		historyFile:      logFile + ".history",
 		snapshotInterval: snapshotInterval,
 		stopSnapshot:     make(chan struct{}),
+		historyMaxLines:  historyMaxLines,
 	}
 	if err := rl.loadSnapshot(); err != nil {
 		return nil, err
@@ -222,10 +231,96 @@ func (l *RemoteList) doSnapshot() {
 		fmt.Println("snapshot: rename error:", err)
 		return
 	}
+
+	if err := l.appendLogToHistoryAndTrim(); err != nil {
+		fmt.Println("snapshot: append history error:", err)
+		return
+	}
+
 	if err := os.Truncate(l.logFile, 0); err != nil && !os.IsNotExist(err) {
 		fmt.Println("snapshot: truncate log error:", err)
 	}
 	fmt.Println("Snapshot salvo.")
+}
+
+func (l *RemoteList) appendLogToHistoryAndTrim() error {
+	// se não existir log, nada a fazer
+	info, err := os.Stat(l.logFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Size() == 0 {
+		// nada novo no log
+		return nil
+	}
+
+	// 1) Ler linhas do history (se existir)
+	historyLines := []string{}
+	if hf, err := os.Open(l.historyFile); err == nil {
+		scanner := bufio.NewScanner(hf)
+		for scanner.Scan() {
+			historyLines = append(historyLines, scanner.Text())
+		}
+		_ = hf.Close()
+		// ignoramos scanner.Err() — se houver problema, continuamos e recriamos o history inteiro
+	}
+
+	// 2) Ler linhas do log atual
+	logLines := []string{}
+	lf, err := os.Open(l.logFile)
+	if err != nil {
+		return err
+	}
+	scanner := bufio.NewScanner(lf)
+	for scanner.Scan() {
+		logLines = append(logLines, scanner.Text())
+	}
+	lf.Close()
+	// se scanner tiver erro aqui, ainda tentaremos usar as linhas lidas
+
+	// 3) combinar history + log
+	combined := make([]string, 0, len(historyLines)+len(logLines))
+	combined = append(combined, historyLines...)
+	combined = append(combined, logLines...)
+
+	// 4) cortar linhas antigas se exceder historyMaxLines (definido no NewRemoteList)
+	if l.historyMaxLines > 0 && len(combined) > l.historyMaxLines {
+		start := len(combined) - l.historyMaxLines
+		combined = combined[start:]
+	}
+
+	// 5) escrever combinado em arquivo temporário e renomear (atômico)
+	tmp := l.historyFile + ".tmp"
+	hf, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	writer := bufio.NewWriter(hf)
+	for _, line := range combined {
+		if _, err := writer.WriteString(line + "\n"); err != nil {
+			_ = hf.Close()
+			return err
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		_ = hf.Close()
+		return err
+	}
+	if err := hf.Sync(); err != nil {
+		_ = hf.Close()
+		return err
+	}
+	if err := hf.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, l.historyFile); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (l *RemoteList) Stop() {
