@@ -1,8 +1,11 @@
 package remotelist
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -180,21 +183,21 @@ func (l *RemoteList) snapshotRoutine() {
 	}
 }
 
-func (r *RemoteList) doSnapshot() {
-	r.mu.Lock()
-	copyState := make(map[int][]int, len(r.lists))
-	for id, lst := range r.lists {
+func (l *RemoteList) doSnapshot() {
+	l.mu.Lock()
+	copyState := make(map[int][]int, len(l.lists))
+	for id, lst := range l.lists {
 		newSlice := make([]int, len(lst))
 		copy(newSlice, lst)
 		copyState[id] = newSlice
 	}
-	r.mu.Unlock()
+	l.mu.Unlock()
 
 	out := make(map[string][]int, len(copyState))
 	for id, lst := range copyState {
 		out[fmt.Sprintf("%d", id)] = lst
 	}
-	tmp := r.snapFile + ".tmp"
+	tmp := l.snapFile + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println("snapshot: open tmp error:", err)
@@ -215,12 +218,16 @@ func (r *RemoteList) doSnapshot() {
 		fmt.Println("snapshot: close error:", err)
 		return
 	}
-	if err := os.Rename(tmp, r.snapFile); err != nil {
+	if err := os.Rename(tmp, l.snapFile); err != nil {
 		fmt.Println("snapshot: rename error:", err)
 		return
 	}
-	if err := os.Truncate(r.logFile, 0); err != nil && !os.IsNotExist(err) {
+	if err := os.Truncate(l.logFile, 0); err != nil && !os.IsNotExist(err) {
 		fmt.Println("snapshot: truncate log error:", err)
 	}
 	fmt.Println("Snapshot salvo.")
+}
+
+func (l *RemoteList) Stop() {
+	close(l.stopSnapshot)
 }

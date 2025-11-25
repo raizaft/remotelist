@@ -2,25 +2,42 @@ package main
 
 import (
 	"fmt"
+	remotelist "ifpb/remotelist/pkg"
 	"net"
 	"net/rpc"
-	"ifpb/remotelist/pkg"
+	"time"
 )
 
 func main() {
-	list := new(remotelist.RemoteList)
+	logFile := "operations.log"
+	snapFile := "snapshot.json"
+
+	list, err := remotelist.NewRemoteList(logFile, snapFile, 5*time.Second)
+	if err != nil {
+		fmt.Println("failed to init remote list:", err)
+		return
+	}
 	rpcs := rpc.NewServer()
-	rpcs.Register(list)
-	l, e := net.Listen("tcp", "[localhost]:5000")
-	defer l.Close()
+	if err := rpcs.Register(list); err != nil {
+		fmt.Println("rpc register:", err)
+		return
+	}
+
+	l, e := net.Listen("tcp", "localhost:5000")
 	if e != nil {
 		fmt.Println("listen error:", e)
+		return
 	}
+	defer l.Close()
+
+	fmt.Println("RemoteList RPC server listening on :5000")
+
 	for {
 		conn, err := l.Accept()
 		if err == nil {
 			go rpcs.ServeConn(conn)
 		} else {
+			fmt.Println("accept error:", err)
 			break
 		}
 	}
