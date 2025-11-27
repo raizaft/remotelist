@@ -110,6 +110,20 @@ func (l *RemoteList) Size(args ArgsListID, reply *int) error {
 	return nil
 }
 
+func (l *RemoteList) Get(args ArgsGet, reply *int) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+
+	list := l.lists[args.ListID]
+	if args.Index < 0 || args.Index >= len(list){
+		return errors.New("index out of bounds")
+	}
+	*reply = list[args.Index]
+	return nil
+
+}
+
 func (l *RemoteList) appendLog(op string, listID, value int) error {
 	f, err := os.OpenFile(l.logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {

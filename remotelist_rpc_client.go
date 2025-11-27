@@ -67,7 +67,10 @@ func main() {
 		fmt.Println("Size:", size)
 	}
 	var val int
-	if err := client.Call("RemoteList.Get", ArgsGet{ListID: 1, Index: 0}, &val); err == nil {
-		fmt.Println("Get[0]:", val)
+	if err := client.Call("RemoteList.Get", ArgsGet{ListID: 1, Index: 0}, &val); err != nil {
+    fmt.Println("Get error:", err)
+	} else {
+    fmt.Println("Get[0]:", val)
 	}
+	
 }
